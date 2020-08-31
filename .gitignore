@@ -9,3 +9,6 @@ dataset-resized.zip
 __pycache__/
 *.whl
 
+# Misc. files
+.DS_Store
+
