@@ -1,0 +1,11 @@
+# Original dataset
+dataset-resized.zip
+
+# IntelliJ editors
+.idea/
+
+# Python files
+*.pyc
+__pycache__/
+*.whl
+
