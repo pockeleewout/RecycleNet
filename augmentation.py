@@ -1,10 +1,13 @@
+import argparse
+import pathlib
+import multiprocessing
 import os
 import random
-import argparse
-import numpy as np
+from typing import *
 
 import albumentations as A
 import cv2
+import numpy as np
 
 
 def get_arguments():
@@ -12,30 +15,47 @@ def get_arguments():
     parser.add_argument('--root_dir', default='dataset-resized/', type=str)
     parser.add_argument('--save_dir', default='augmented/', type=str)
     parser.add_argument('--probability', default='low', help='low, mid, high; probability of applying the transform')
-    parser.add_argument('--seed', default=1234, type=int, help='seed for randomize')
+    parser.add_argument('--seed', type=int, help='seed for randomize')
     return parser.parse_args()
 
 
-def augment_and_save(aug_list, root_dir, save_dir):
-    img_list = []
-    folder_list = os.listdir(root_dir)
-    folders = [os.path.join(root_dir, folder) for folder in folder_list]
-    for folder in folders:
-        files = os.listdir(folder)
-        img_list.append([os.path.join(folder, file) for file in files])
+def process_image(source: os.PathLike, destination: os.PathLike, aug_list) -> None:
+    """Processing function for images"""
+    # TODO: Catch exception when file is not an image
+    image = cv2.imread(source)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    for aug in aug_list:
+        try:
+            augmented = aug(image=image)
+        except TypeError as e:
+            print(destination, e)
+            raise e
+        aug_img = cv2.cvtColor(augmented["image"], cv2.COLOR_BGR2RGB)
+        cv2.imwrite(destination, aug_img)
+        del augmented, aug_img
 
-    for i in range(len(img_list)):
-        if not os.path.exists(os.path.join(save_dir, folder_list[i])):
-            os.makedirs(os.path.join(save_dir, folder_list[i]))
 
-        for j, img in enumerate(img_list[i]):
-            image = cv2.imread(img)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            save_path = os.path.join(save_dir, folder_list[i], folder_list[i] + str(j) + '.jpg')
-            for aug in aug_list:
-                augmented = aug(image=image)
-                aug_img = cv2.cvtColor(augmented['image'], cv2.COLOR_BGR2RGB)
-                cv2.imwrite(save_path, aug_img)
+def augment_and_save(aug_list: List[Callable], root_dir: os.PathLike, save_dir: os.PathLike) -> None:
+    def img_list(root: os.PathLike):
+        """Generator function for all the images in the root directory"""
+        # Recursive glob over all files in root directory
+        for path in pathlib.Path(root).rglob("*"):
+            # Yield path if it's a file
+            if path.is_file():
+                yield path
+
+    def arg_builder(path_gen: Iterator[pathlib.Path]):
+        """Generate the arguments for the processing function"""
+        for path in path_gen:
+            destination = pathlib.Path(os.path.join(save_dir, path.parent.name, path.name))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            yield str(path.resolve(True)), str(destination.resolve(False)), aug_list
+
+    pool = multiprocessing.Pool()
+    pool.starmap(process_image, arg_builder(img_list(root_dir)), )
+
+    pool.close()
+    pool.join()
 
 
 class augmentation():
@@ -52,29 +72,35 @@ class augmentation():
 
     def basic(self):  # Basic
         aug = A.Compose([
-            A.Normalize(mean=self.mean, std=self.std),
             # Divide pixel values by 255 = 2**8 - 1, subtract mean per channel and divide by std per channel.
+            A.Normalize(mean=self.mean, std=self.std),
             A.OneOf([
-                A.RandomCrop(height=224, width=224, p=1),  # Crop a random part of the input.
-                A.CenterCrop(height=224, width=224, p=1),  # Crop the central part of the input.
-                A.RandomSizedCrop(min_max_height=(256, 384), height=224, width=224, p=1),
+                # Crop a random part of the input.
+                A.RandomCrop(height=224, width=224, p=1),
+                # Crop the central part of the input.
+                A.CenterCrop(height=224, width=224, p=1),
                 # Crop a random part of the input and rescale it to some size.
+                A.RandomSizedCrop(min_max_height=(256, 384), height=224, width=224, p=1),
             ], p=1),
-            A.RandomBrightness(limit=0.2, p=self.p),  # Randomly change brightness of the input image.
-            A.RandomContrast(limit=0.2, p=self.p)  # Randomly change contrast of the input image.
+            # Randomly change brightness of the input image.
+            A.RandomBrightness(limit=0.2, p=self.p),
+            # Randomly change contrast of the input image.
+            A.RandomContrast(limit=0.2, p=self.p)
         ], p=1)
 
         return aug
 
     def affine_transform(self):  # Affine Transforms: Scale & Translation & Rotation
         aug = A.Compose([
-            A.Transpose(p=self.p),  # Transpose the input by swapping rows and columns.
+            # Transpose the input by swapping rows and columns.
+            A.Transpose(p=self.p),
             A.OneOf([
-                A.RandomRotate90(p=self.p),  # Randomly rotate the input by 90 degrees zero or more times.
-                A.Rotate(limit=90, p=self.p),
+                # Randomly rotate the input by 90 degrees zero or more times.
+                A.RandomRotate90(p=self.p),
                 # Rotate the input by an angle selected randomly from the uniform distribution.
-                A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=45, p=self.p)
+                A.Rotate(limit=90, p=self.p),
                 # Randomly apply affine transforms: translate, scale and rotate the input.
+                A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=45, p=self.p)
             ], p=1),
             A.OneOf([
                 A.HorizontalFlip(p=self.p),  # Flip the input vertically around the x-axis.
@@ -87,26 +113,35 @@ class augmentation():
 
     def blur_and_distortion(self, kernel_size=(3, 3)):  # Blur & Distortion
         aug = A.Compose([
-            A.OneOf([A.Blur(blur_limit=kernel_size, p=self.p),  # Blur the input image using a random-sized kernel.
-                     A.MotionBlur(blur_limit=kernel_size, p=self.p),
-                     # Apply motion blur to the input image using a random-sized kernel.
-                     A.MedianBlur(blur_limit=kernel_size, p=self.p),
-                     # Blur the input image using using a median filter with a random aperture linear size.
-                     A.GaussianBlur(blur_limit=kernel_size, p=self.p)
-                     # Blur the input image using using a Gaussian filter with a random kernel size.
-                     ], p=1),
+            A.OneOf([
+                # Blur the input image using a random-sized kernel.
+                A.Blur(blur_limit=kernel_size, p=self.p),
+                # Apply motion blur to the input image using a random-sized kernel.
+                A.MotionBlur(blur_limit=kernel_size, p=self.p),
+                # Blur the input image using using a median filter with a random aperture linear size.
+                A.MedianBlur(blur_limit=kernel_size, p=self.p),
+                # Blur the input image using using a Gaussian filter with a random kernel size.
+                A.GaussianBlur(blur_limit=kernel_size, p=self.p)
+            ], p=1),
             A.OneOf([
                 A.RandomGamma(gamma_limit=(80, 120), p=self.p),
                 A.OpticalDistortion(distort_limit=0.05, shift_limit=0.05, p=self.p),
                 A.ElasticTransform(p=self.p),
-                A.HueSaturationValue(p=self.p),  # Randomly change hue, saturation and value of the input image.
-                A.RGBShift(p=self.p),  # Randomly shift values for each channel of the input RGB image.
-                A.ChannelShuffle(p=self.p),  # Randomly rearrange channels of the input RGB image.
-                A.CLAHE(p=self.p),  # Apply Contrast Limited Adaptive Histogram Equalization to the input image.
-                A.InvertImg(p=self.p),  # Invert the input image by subtracting pixel values from 255.
+                # Randomly change hue, saturation and value of the input image.
+                A.HueSaturationValue(p=self.p),
+                # Randomly shift values for each channel of the input RGB image.
+                A.RGBShift(p=self.p),
+                # Randomly rearrange channels of the input RGB image.
+                # A.ChannelShuffle(p=self.p),
+                # Apply Contrast Limited Adaptive Histogram Equalization to the input image.
+                A.CLAHE(p=self.p),
+                # Invert the input image by subtracting pixel values from 255.
+                A.InvertImg(p=self.p),
             ], p=1),
-            A.GaussNoise(var_limit=(10.0, 50.0), mean=0, p=self.p),  # Apply gaussian noise to the input image.
-            A.RandomShadow(p=self.p)  # Simulates shadows for the image
+            # Apply gaussian noise to the input image.
+            A.GaussNoise(var_limit=(10.0, 50.0), mean=0, p=self.p),
+            # Simulates shadows for the image
+            A.RandomShadow(p=self.p),
         ], p=1)
 
         return aug
