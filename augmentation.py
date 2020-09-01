@@ -32,7 +32,7 @@ def process_image(source: os.PathLike, destination: os.PathLike, aug_list: Itera
 
 
 def augment_and_save(aug_list: List[Callable], root_dir: os.PathLike, save_dir: os.PathLike) -> None:
-    def img_list(root: os.PathLike) -> Generator[pathlib.Path]:
+    def img_list(root: os.PathLike) -> Generator[pathlib.Path, None, None]:
         """Generator function for all the images in the root directory"""
         # Recursive glob over all files in root directory
         for path in pathlib.Path(root).rglob("*"):
@@ -40,7 +40,8 @@ def augment_and_save(aug_list: List[Callable], root_dir: os.PathLike, save_dir: 
             if path.is_file():
                 yield path
 
-    def arg_builder(path_gen: Iterator[pathlib.Path]) -> Generator[Tuple[os.PathLike, os.PathLike, List[Callable]]]:
+    def arg_builder(path_gen: Iterator[pathlib.Path]) -> Generator[
+            Tuple[os.PathLike, os.PathLike, List[Callable]], None, None]:
         """Generate the arguments for the processing function"""
         for path in path_gen:
             path = path.resolve(True)
