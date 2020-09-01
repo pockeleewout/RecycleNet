@@ -7,7 +7,6 @@ from typing import *
 
 import albumentations as A
 import cv2
-import numpy as np
 
 
 def get_arguments():
@@ -56,7 +55,7 @@ def augment_and_save(aug_list: List[Callable], root_dir: os.PathLike, save_dir: 
     pool.join()
 
 
-class augmentation():
+class Augmentation:
     def __init__(self, probability):
         if probability == 'low':  # probability of applying the transform
             self.p = 0.1
@@ -69,7 +68,7 @@ class augmentation():
         self.std = [0.229, 0.224, 0.225]
 
     def basic(self):  # Basic
-        aug = A.Compose([
+        return A.Compose([
             # Divide pixel values by 255 = 2**8 - 1, subtract mean per channel and divide by std per channel.
             A.Normalize(mean=self.mean, std=self.std),
             A.OneOf([
@@ -86,10 +85,8 @@ class augmentation():
             A.RandomContrast(limit=0.2, p=self.p)
         ], p=1)
 
-        return aug
-
     def affine_transform(self):  # Affine Transforms: Scale & Translation & Rotation
-        aug = A.Compose([
+        return A.Compose([
             # Transpose the input by swapping rows and columns.
             A.Transpose(p=self.p),
             A.OneOf([
@@ -107,10 +104,8 @@ class augmentation():
             ], p=1)
         ], p=1)
 
-        return aug
-
     def blur_and_distortion(self, kernel_size=(3, 3)):  # Blur & Distortion
-        aug = A.Compose([
+        return A.Compose([
             A.OneOf([
                 # Blur the input image using a random-sized kernel.
                 A.Blur(blur_limit=kernel_size, p=self.p),
@@ -142,23 +137,17 @@ class augmentation():
             A.RandomShadow(p=self.p),
         ], p=1)
 
-        return aug
-
 
 def main():
     args = get_arguments()
 
-    ROOT_DIR = args.root_dir
-    SAVE_DIR = args.save_dir
-    AUG_PROB = args.probability
-
     if args.seed is not None:
         random.seed(args.seed)
 
-    aug = augmentation(AUG_PROB)
-    aug_list = [aug.basic(), aug.affine_transform(), aug.blur_and_distortion()]
+    augmentation = Augmentation(args.probability)
+    aug_list = [augmentation.basic(), augmentation.affine_transform(), augmentation.blur_and_distortion()]
 
-    augment_and_save(aug_list, ROOT_DIR, SAVE_DIR)
+    augment_and_save(aug_list, args.root_dir, args.save_dir)
 
 
 if __name__ == '__main__':
