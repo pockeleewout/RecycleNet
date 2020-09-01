@@ -19,24 +19,20 @@ def get_arguments():
     return parser.parse_args()
 
 
-def process_image(source: os.PathLike, destination: os.PathLike, aug_list) -> None:
+def process_image(source: os.PathLike, destination: os.PathLike, aug_list: Iterator[Callable]) -> None:
     """Processing function for images"""
     # TODO: Catch exception when file is not an image
     image = cv2.imread(source)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     for aug in aug_list:
-        try:
-            augmented = aug(image=image)
-        except TypeError as e:
-            print(destination, e)
-            raise e
+        augmented = aug(image=image)
         aug_img = cv2.cvtColor(augmented["image"], cv2.COLOR_BGR2RGB)
         cv2.imwrite(destination, aug_img)
         del augmented, aug_img
 
 
 def augment_and_save(aug_list: List[Callable], root_dir: os.PathLike, save_dir: os.PathLike) -> None:
-    def img_list(root: os.PathLike):
+    def img_list(root: os.PathLike) -> Generator[pathlib.Path]:
         """Generator function for all the images in the root directory"""
         # Recursive glob over all files in root directory
         for path in pathlib.Path(root).rglob("*"):
@@ -44,15 +40,16 @@ def augment_and_save(aug_list: List[Callable], root_dir: os.PathLike, save_dir: 
             if path.is_file():
                 yield path
 
-    def arg_builder(path_gen: Iterator[pathlib.Path]):
+    def arg_builder(path_gen: Iterator[pathlib.Path]) -> Generator[Tuple[os.PathLike, os.PathLike, List[Callable]]]:
         """Generate the arguments for the processing function"""
         for path in path_gen:
-            destination = pathlib.Path(os.path.join(save_dir, path.parent.name, path.name))
+            path = path.resolve(True)
+            destination = pathlib.Path(os.path.join(save_dir, path.parent.name, path.name)).resolve(False)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            yield str(path.resolve(True)), str(destination.resolve(False)), aug_list
+            yield str(path), str(destination), aug_list
 
     pool = multiprocessing.Pool()
-    pool.starmap(process_image, arg_builder(img_list(root_dir)), )
+    pool.starmap(process_image, arg_builder(img_list(root_dir)))
 
     pool.close()
     pool.join()
